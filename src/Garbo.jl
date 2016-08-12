@@ -13,8 +13,9 @@ else
     leave_gc_safepoint(gs) = 1
 end
 
+import Base.ndims, Base.length, Base.size, Base.get, Base.put!
 export Garray, Dtree, nnodes, nodeid,
-       get, put, sync, distribution, access,
+       sync, distribution, access,
        initwork, getwork, runtree
 
 const fan_out = 2048
@@ -23,37 +24,89 @@ const libgarbo = joinpath(dirname(@__FILE__), "..", "deps", "Garbo",
         "libgarbo.$(Libdl.dlext)")
 
 function __init__()
-    global const ghandle = [ 0 ]
-    ccall((:garbo_init, libgarbo), Cint, (Cint, Ptr{Ptr{UInt8}}, Ptr{Void}),
+    global const ghandle = [C_NULL]
+    ccall((:garbo_init, libgarbo), Int64, (Cint, Ptr{Ptr{UInt8}}, Ptr{Void}),
           length(ARGS), ARGS, pointer(ghandle, 1))
-    global const nnodes = Int(ccall((:garbo_nnodes, libgarbo), Cint, ()))
-    global const nodeid = Int(ccall((:garbo_nodeid, libgarbo), Cint, ())+1)
+    global const nnodes = ccall((:garbo_nnodes, libgarbo), Int64, ())
+    global const nodeid = ccall((:garbo_nodeid, libgarbo), Int64, ())+1
     atexit() do
-        ccall((:garbo_shutdown, libgarbo), Cint, (Ptr{Void},), ghandle[1])
+        ccall((:garbo_shutdown, libgarbo), Void, (Ptr{Void},), ghandle[1])
     end
 end
 
 type Garray
     ahandle::Array{Ptr{Void}}
+    atyp::DataType
+end
 
-    function Garray(T::DataType, dims::Array{Int}; chunks::Array{Int}=[])
-        a = new([0])
-        r = ccall((:garbo_create, libgarbo), Cint, (Ptr{Void}, Cint, Ptr{Cint},
-                Cint, Ptr{Cint}, Ptr{Void}), ghandle[1], length(dims),
-                dims, sizeof(T), chunks, pointer(a.ahandle, 1))
-        if r != 0
-            error("construction failure")
-        end
-        finalizer(a, (x -> ccall((:garbo_destroy, libgarbo),
-                                 Void, (Ptr{Void},), a.ahandle[1])))
-        return a
+function Garray(T::DataType, dims...)
+    a = Garray([C_NULL], T)
+    nd = length(dims)
+    if nd < 1
+        error("Garray must have at least one dimension")
     end
+    adims = collect(dims)::Vector{Int64}
+    r = ccall((:garray_create, libgarbo), Int64, (Ptr{Void}, Int64, Ptr{Int64},
+            Int64, Ptr{Int64}, Ptr{Void}), ghandle[1], nd, adims, sizeof(T),
+            C_NULL, pointer(a.ahandle, 1))
+    if r != 0
+        error("construction failure")
+    end
+    finalizer(a, (x -> ccall((:garray_destroy, libgarbo),
+                             Void, (Ptr{Void},), a.ahandle[1])))
+    return a
 end
 
-function get()
+function ndims(ga::Garray)
+    ccall((:garray_ndims, libgarbo), Int64, (Ptr{Void},), ga.ahandle[1])
 end
 
-sync() = ccall((:garbo_sync, libgarbo), Void, (Ptr{Void},), ghandle[1])
+function length(ga::Garray)
+    ccall((:garray_length, libgarbo), Int64, (Ptr{Void},), ga.ahandle[1])
+end
+
+function size(ga::Garray)
+    dims = Array(Int64, ndims(ga))
+    r = ccall((:garray_size, libgarbo), Int64, (Ptr{Void}, Ptr{Int64}),
+            ga.ahandle[1], dims)
+    if r != 0
+        error("could not get size")
+    end
+    return tuple(dims...)
+end
+
+function sync(ga::Garray)
+    ccall((:garray_sync, libgarbo), Void, (Ptr{Void},), ga.ahandle[1])
+end
+
+function get(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64})
+    adjlo = lo - 1
+    adjhi = hi - 1
+    dims = hi - lo + 1
+    buf = Array(ga.atyp, dims...)
+    r = ccall((:garray_get, libgarbo), Int64, (Ptr{Void}, Ptr{Int64}, Ptr{Int64},
+            Ptr{Void}), ga.ahandle[1], lo, hi, buf)
+    if r != 0
+        error("Garray get failed")
+    end
+    return buf
+end
+
+function put!(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64}, 
+function distribution(ga::Garray, nid::Int64)
+    nd = ndims(ga)
+    lo = Array(Int64, nd)
+    hi = Array(Int64, nd)
+    r = ccall((:garray_distribution, libgarbo), Int64, (Ptr{Void}, Int64,
+            Ptr{Int64}, Ptr{Int64}), ga.ahandle[1], nid-1, lo, hi)
+    if r != 0
+        error("could not get distribution")
+    end
+    lo = lo+1
+    hi = hi+1
+    return lo, hi
+end
+
 
 type Dtree
     handle::Array{Ptr{Void}}
@@ -90,7 +143,7 @@ function initwork(dt::Dtree)
     wp1 = pointer(w, 1)
     wp2 = pointer(w, 2)
     gs = enter_gc_safepoint()
-    r = ccall((:garbo_initwork, libgarbo), Cint,
+    r = ccall((:dtree_initwork, libgarbo), Cint,
             (Ptr{Void}, Ptr{Int64}, Ptr{Int64}), dt.handle[1], wp1, wp2)
     leave_gc_safepoint(gs)
     return r, (w[1]+1, w[2])
@@ -101,7 +154,7 @@ function getwork(dt::Dtree)
     wp1 = pointer(w, 1)
     wp2 = pointer(w, 2)
     gs = enter_gc_safepoint()
-    r = ccall((:garbo_getwork, libgarbo), Cint,
+    r = ccall((:dtree_getwork, libgarbo), Cint,
             (Ptr{Void}, Ptr{Int64}, Ptr{Int64}), dt.handle[1], wp1, wp2)
     leave_gc_safepoint(gs)
     return r, (w[1]+1, w[2])
@@ -110,7 +163,7 @@ end
 function runtree(dt::Dtree)
     r = 0
     gs = enter_gc_safepoint()
-    r = ccall((:garbo_run, libgarbo), Cint, (Ptr{Void},), dt.handle[1])
+    r = ccall((:dtree_run, libgarbo), Cint, (Ptr{Void},), dt.handle[1])
     leave_gc_safepoint(gs)
     Bool(r > 0)
 end
