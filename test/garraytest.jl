@@ -3,8 +3,8 @@
 using Garbo
 
 immutable Aelem
-    num::Int64
-    num2::Int64
+    idx::Int64
+    rank::Int64
 end
 
 @inline nputs(nid, s) = ccall(:puts, Cint, (Ptr{Int8},), string("[$nid] ", s))
@@ -42,24 +42,31 @@ nputs(nodeid, string(lo, "-", hi))
 # write into the local part
 p = access(ga, lo, hi)
 for i = 1:hi[1]-lo[1]+1
-    p[i] = Aelem(nodeid, nodeid*nodeid)
+    p[i] = Aelem(lo[1]+i-1, nodeid)
 end
 
 # sync to let all nodes complete writing
 sync(ga)
 
 # get the whole array on node 1 and verify it
+even_dist_garray = true
 if nodeid == 1
     fa = get(ga, [1], [nelems])
-    nputs(nodeid, fa)
+    for i=1:nelems
+        if fa[i].idx != i
+            even_dist_garray = false
+            break
+        end
+    end
+    @tst even_dist_garray
 end
 
-#finalize(ga)
+finalize(ga)
 
-#=
+
 # uneven distribution
 # ---
-nelems = nelems + (nnodes/2)
+nelems = nelems + Int(ceil(nnodes/2))
 ga = Garray(Aelem, nelems)
 
 # get the local part, write into it, and sync
@@ -67,15 +74,22 @@ lo, hi = distribution(ga, nodeid)
 nputs(nodeid, string(lo, "-", hi))
 p = access(ga, lo, hi)
 for i = 1:hi[1]-lo[1]+1
-    p[i] = Aelem(nodeid, nodeid*nodeid)
+    p[i] = Aelem(lo[1]+i-1, nodeid)
 end
 sync(ga)
 
 # get the whole array on node 1 and verify it
+uneven_dist_garray = true
 if nodeid == 1
     fa = get(ga, [1], [nelems])
-    nputs(nodeid, fa)
+    for i=1:nelems
+        if fa[i].idx != i
+            uneven_dist_garray = false
+            break
+        end
+    end
+    @tst uneven_dist_garray
 end
+
 finalize(ga)
-=#
 
