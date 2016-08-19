@@ -1,12 +1,10 @@
 module Garbo
 
-#if VERSION > v"0.5.0-dev"
 if isdefined(Base, :Threads)
     using Base.Threads
     enter_gc_safepoint() = ccall(:jl_gc_safe_enter, Int8, ())
     leave_gc_safepoint(gs) = ccall(:jl_gc_safe_leave, Void, (Int8,), gs)
 else
-    # Pre-Julia 0.5 there are no threads
     nthreads() = 1
     threadid() = 1
     enter_gc_safepoint() = 1
@@ -29,9 +27,15 @@ function __init__()
           length(ARGS), ARGS, pointer(ghandle, 1))
     global const nnodes = ccall((:garbo_nnodes, libgarbo), Int64, ())
     global const nodeid = ccall((:garbo_nodeid, libgarbo), Int64, ())+1
+    global num_garrays = 0
+    global exiting = false
     atexit() do
-        ccall((:garbo_shutdown, libgarbo), Void, (Ptr{Void},), ghandle[1])
+        exiting = true
     end
+end
+
+function __shutdown__()
+    ccall((:garbo_shutdown, libgarbo), Void, (Ptr{Void},), ghandle[1])
 end
 
 type Garray
@@ -40,20 +44,26 @@ type Garray
 end
 
 function Garray(T::DataType, dims...)
-    a = Garray([C_NULL], T)
     nd = length(dims)
     if nd < 1
         error("Garray must have at least one dimension")
     end
     adims = collect(dims)::Vector{Int64}
+    a = Garray([C_NULL], T)
     r = ccall((:garray_create, libgarbo), Int64, (Ptr{Void}, Int64, Ptr{Int64},
             Int64, Ptr{Int64}, Ptr{Void}), ghandle[1], nd, adims, sizeof(T),
             C_NULL, pointer(a.ahandle, 1))
     if r != 0
         error("construction failure")
     end
-    finalizer(a, (x -> ccall((:garray_destroy, libgarbo),
-                             Void, (Ptr{Void},), a.ahandle[1])))
+    global num_garrays
+    num_garrays = num_garrays+1
+    finalizer(a, (function(a)
+                    ccall((:garray_destroy, libgarbo),
+                            Void, (Ptr{Void},), a.ahandle[1])
+                    num_garrays = num_garrays-1
+                    exiting && num_garrays == 0 && __shutdown__()
+                  end))
     return a
 end
 
@@ -85,14 +95,16 @@ function get(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64})
     dims = hi - lo + 1
     buf = Array(ga.atyp, dims...)
     r = ccall((:garray_get, libgarbo), Int64, (Ptr{Void}, Ptr{Int64}, Ptr{Int64},
-            Ptr{Void}), ga.ahandle[1], lo, hi, buf)
+            Ptr{Void}), ga.ahandle[1], adjlo, adjhi, buf)
     if r != 0
         error("Garray get failed")
     end
     return buf
 end
 
-function put!(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64}, 
+function put!(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64}, buf::Array)
+end
+
 function distribution(ga::Garray, nid::Int64)
     nd = ndims(ga)
     lo = Array(Int64, nd)
@@ -105,6 +117,17 @@ function distribution(ga::Garray, nid::Int64)
     lo = lo+1
     hi = hi+1
     return lo, hi
+end
+
+function access(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64})
+    p = [C_NULL]
+    r = ccall((:garray_access, libgarbo), Int64, (Ptr{Void}, Ptr{Int64},
+            Ptr{Int64}, Ptr{Ptr{Void}}), ga.ahandle[1], lo-1, hi-1,
+            pointer(p, 1))
+    if r != 0
+        error("could not get access")
+    end
+    return unsafe_wrap(Array, convert(Ptr{ga.atyp}, p[1]), hi[1]-lo[1]+1)
 end
 
 
