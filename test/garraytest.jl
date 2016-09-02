@@ -45,8 +45,9 @@ for i = 1:hi[1]-lo[1]+1
     p[i] = Aelem(lo[1]+i-1, nodeid)
 end
 
-# sync to let all nodes complete writing
-sync(ga)
+# let all nodes complete writing
+flush(ga)
+sync()
 
 # get the whole array on node 1 and verify it
 even_dist_garray = true
@@ -76,7 +77,8 @@ p = access(ga, lo, hi)
 for i = 1:hi[1]-lo[1]+1
     p[i] = Aelem(lo[1]+i-1, nodeid)
 end
-sync(ga)
+flush(ga)
+sync()
 
 # get the whole array on node 1 and verify it
 uneven_dist_garray = true

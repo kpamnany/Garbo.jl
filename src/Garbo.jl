@@ -1,19 +1,12 @@
 module Garbo
 
-if isdefined(Base, :Threads)
-    using Base.Threads
-    enter_gc_safepoint() = ccall(:jl_gc_safe_enter, Int8, ())
-    leave_gc_safepoint(gs) = ccall(:jl_gc_safe_leave, Void, (Int8,), gs)
-else
-    nthreads() = 1
-    threadid() = 1
-    enter_gc_safepoint() = 1
-    leave_gc_safepoint(gs) = 1
-end
+using Base.Threads
+enter_gc_safepoint() = ccall(:jl_gc_safe_enter, Int8, ())
+leave_gc_safepoint(gs) = ccall(:jl_gc_safe_leave, Void, (Int8,), gs)
 
 import Base.ndims, Base.length, Base.size, Base.get, Base.put!
 export Garray, Dtree, nnodes, nodeid,
-       sync, distribution, access,
+       flush, sync, distribution, access,
        initwork, getwork, runtree
 
 const fan_out = 2048
@@ -36,6 +29,10 @@ end
 
 function __shutdown__()
     ccall((:garbo_shutdown, libgarbo), Void, (Ptr{Void},), ghandle[1])
+end
+
+function sync()
+    ccall((:garbo_sync, libgarbo), Void, ())
 end
 
 type Garray
@@ -85,7 +82,7 @@ function size(ga::Garray)
     return tuple(dims...)
 end
 
-function sync(ga::Garray)
+function flush(ga::Garray)
     ccall((:garray_sync, libgarbo), Void, (Ptr{Void},), ga.ahandle[1])
 end
 
