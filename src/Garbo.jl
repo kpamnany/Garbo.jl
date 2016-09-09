@@ -100,6 +100,13 @@ function get(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64})
 end
 
 function put!(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64}, buf::Array)
+    adjlo = lo - 1
+    adjhi = hi - 1
+    r = ccall((:garray_put, libgarbo), Int64, (Ptr{Void}, Ptr{Int64}, Ptr{Int64},
+            Ptr{Void}), ga.ahandle[1], adjlo, adjhi, buf)
+    if r != 0
+        error("Garray put failed")
+    end
 end
 
 function distribution(ga::Garray, nid::Int64)
