@@ -83,7 +83,7 @@ function size(ga::Garray)
 end
 
 function flush(ga::Garray)
-    ccall((:garray_sync, libgarbo), Void, (Ptr{Void},), ga.ahandle[1])
+    ccall((:garray_flush, libgarbo), Void, (Ptr{Void},), ga.ahandle[1])
 end
 
 function get(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64})
