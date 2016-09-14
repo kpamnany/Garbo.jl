@@ -27,7 +27,7 @@ end
 nelems = nnodes * 5
 
 # create the array
-ga = Garray(Aelem, nelems)
+ga = Garray(Aelem, sizeof(Aelem), nelems)
 @tst ndims(ga) == 1
 @tst length(ga) == nnodes * 5
 @tst size(ga) == tuple(nnodes * 5)
@@ -55,6 +55,7 @@ if nodeid == 1
     fa = get(ga, [1], [nelems])
     for i=1:nelems
         if fa[i].idx != i
+            println(i, fa[i])
             even_dist_garray = false
             break
         end
@@ -68,7 +69,7 @@ finalize(ga)
 # uneven distribution
 # ---
 nelems = nelems + Int(ceil(nnodes/2))
-ga = Garray(Aelem, nelems)
+ga = Garray(Aelem, sizeof(Aelem), nelems)
 
 # get the local part, write into it, and sync
 lo, hi = distribution(ga, nodeid)

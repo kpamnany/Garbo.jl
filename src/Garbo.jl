@@ -4,9 +4,9 @@ using Base.Threads
 enter_gc_safepoint() = ccall(:jl_gc_safe_enter, Int8, ())
 leave_gc_safepoint(gs) = ccall(:jl_gc_safe_leave, Void, (Int8,), gs)
 
-import Base.ndims, Base.length, Base.size, Base.get, Base.put!
+import Base.ndims, Base.length, Base.size, Base.get, Base.put!, Base.flush
 export Garray, Dtree, nnodes, nodeid,
-       flush, sync, distribution, access,
+       sync, distribution, access,
        initwork, getwork, runtree
 
 const fan_out = 2048
@@ -38,17 +38,20 @@ end
 type Garray
     ahandle::Array{Ptr{Void}}
     atyp::DataType
+    elem_size::Int64
+    access_iob::IOBuffer
+    access_arr::Array
 end
 
-function Garray(T::DataType, dims...)
+function Garray(T::DataType, elem_size::Int64, dims...)
     nd = length(dims)
     if nd < 1
         error("Garray must have at least one dimension")
     end
     adims = collect(dims)::Vector{Int64}
-    a = Garray([C_NULL], T)
+    a = Garray([C_NULL], T, elem_size, IOBuffer(1), [])
     r = ccall((:garray_create, libgarbo), Int64, (Ptr{Void}, Int64, Ptr{Int64},
-            Int64, Ptr{Int64}, Ptr{Void}), ghandle[1], nd, adims, sizeof(T),
+            Int64, Ptr{Int64}, Ptr{Void}), ghandle[1], nd, adims, a.elem_size,
             C_NULL, pointer(a.ahandle, 1))
     if r != 0
         error("construction failure")
@@ -83,6 +86,14 @@ function size(ga::Garray)
 end
 
 function flush(ga::Garray)
+    if ga.access_arr != []
+        for i = 1:length(ga.access_arr)
+            serialize(ga.access_iob, ga.access_arr[i])
+            seek(ga.access_iob, i * ga.elem_size)
+        end
+        ga.access_iob = IOBuffer(1)
+        ga.access_arr = []
+    end
     ccall((:garray_flush, libgarbo), Void, (Ptr{Void},), ga.ahandle[1])
 end
 
@@ -90,11 +101,22 @@ function get(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64})
     adjlo = lo - 1
     adjhi = hi - 1
     dims = hi - lo + 1
-    buf = Array(ga.atyp, dims...)
+    cbufdims = dims * ga.elem_size
+    cbuf = Array(UInt8, cbufdims...)
     r = ccall((:garray_get, libgarbo), Int64, (Ptr{Void}, Ptr{Int64}, Ptr{Int64},
-            Ptr{Void}), ga.ahandle[1], adjlo, adjhi, buf)
+            Ptr{Void}), ga.ahandle[1], adjlo, adjhi, cbuf)
     if r != 0
         error("Garray get failed")
+    end
+    iob = IOBuffer(cbuf)
+    buf = Array(ga.atyp, dims...)
+    for i = 1:length(buf)
+        try
+            buf[i] = deserialize(iob)
+        catch e
+            break
+        end
+        seek(iob, i * ga.elem_size)
     end
     return buf
 end
@@ -102,8 +124,16 @@ end
 function put!(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64}, buf::Array)
     adjlo = lo - 1
     adjhi = hi - 1
+    dims = hi - lo + 1
+    cbufdims = dims * ga.elem_size
+    cbuf = Array(UInt8, cbufdims...)
+    iob = IOBuffer(cbuf, true, true)
+    for i = 1:length(buf)
+        serialize(iob, buf[i])
+        seek(iob, i * ga.elem_size)
+    end
     r = ccall((:garray_put, libgarbo), Int64, (Ptr{Void}, Ptr{Int64}, Ptr{Int64},
-            Ptr{Void}), ga.ahandle[1], adjlo, adjhi, buf)
+            Ptr{Void}), ga.ahandle[1], adjlo, adjhi, cbuf)
     if r != 0
         error("Garray put failed")
     end
@@ -131,7 +161,23 @@ function access(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64})
     if r != 0
         error("could not get access")
     end
-    return unsafe_wrap(Array, convert(Ptr{ga.atyp}, p[1]), hi[1]-lo[1]+1)
+    dims = hi - lo + 1
+    buf = Array(ga.atyp, dims...)
+    cdims = dims * ga.elem_size
+    iob = IOBuffer(unsafe_wrap(Array, convert(Ptr{UInt8}, p[1]), cdims...),
+                   true, true)
+    for i = 1:length(buf)
+        try
+            buf[i] = deserialize(iob)
+        catch e
+            break
+        end
+        seek(iob, i * ga.elem_size)
+    end
+    seek(iob, 0)
+    ga.access_iob = iob
+    ga.access_arr = buf
+    return buf
 end
 
 
