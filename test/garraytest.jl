@@ -7,14 +7,13 @@ immutable Aelem
     rank::Int64
 end
 
-@inline nputs(nid, s) = ccall(:puts, Cint, (Ptr{Int8},), string("[$nid] ", s))
-@inline ptest(r, s) = nputs(nodeid, string(r ? "passed: " : "failed: ", s))
+@inline nputs(nid, s...) = ccall(:puts, Cint, (Ptr{Int8},), string("[$nid] ", s...))
 
 macro tst(ex)
     oex = Expr(:inert, ex)
     quote
         r = $ex
-        nputs(nodeid, string((r ? "passed: " : "failed: "), $oex))
+        nputs(nodeid, r ? "passed: " : "failed: ", $oex)
     end
 end
 
@@ -27,7 +26,7 @@ end
 nelems = nnodes * 5
 
 # create the array
-ga = Garray(Aelem, sizeof(Aelem), nelems)
+ga = Garray(Aelem, sizeof(Aelem)+8, nelems)
 @tst ndims(ga) == 1
 @tst length(ga) == nnodes * 5
 @tst size(ga) == tuple(nnodes * 5)
@@ -37,10 +36,11 @@ lo, hi = distribution(ga, nodeid)
 @tst lo[1] == ((nodeid-1)*5)+1
 @tst hi[1] == lo[1]+4
 
-nputs(nodeid, string(lo, "-", hi))
+nputs(nodeid, lo, "-", hi)
 
 # write into the local part
 p = access(ga, lo, hi)
+nputs(nodeid, hi[1]-lo[1]+1)
 for i = 1:hi[1]-lo[1]+1
     p[i] = Aelem(lo[1]+i-1, nodeid)
 end
@@ -69,11 +69,11 @@ finalize(ga)
 # uneven distribution
 # ---
 nelems = nelems + Int(ceil(nnodes/2))
-ga = Garray(Aelem, sizeof(Aelem), nelems)
+ga = Garray(Aelem, sizeof(Aelem)+8, nelems)
 
 # get the local part, write into it, and sync
 lo, hi = distribution(ga, nodeid)
-nputs(nodeid, string(lo, "-", hi))
+nputs(nodeid, lo, "-", hi)
 p = access(ga, lo, hi)
 for i = 1:hi[1]-lo[1]+1
     p[i] = Aelem(lo[1]+i-1, nodeid)
