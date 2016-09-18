@@ -6,6 +6,8 @@ type Garray
     access_arr::Array
 end
 
+typealias GarrayMemoryHandle IOBuffer
+
 function Garray(T::DataType, elem_size::Int64, dims...)
     nd = length(dims)
     if nd < 1
@@ -24,6 +26,7 @@ function Garray(T::DataType, elem_size::Int64, dims...)
     finalizer(a, (function(a)
                     ccall((:garray_destroy, libgarbo),
                             Void, (Ptr{Void},), a.ahandle[1])
+                    global num_garrays
                     num_garrays = num_garrays-1
                     exiting && num_garrays == 0 && __shutdown__()
                   end))
@@ -48,18 +51,6 @@ function size(ga::Garray)
     return tuple(dims...)
 end
 
-function flush(ga::Garray)
-    if ga.access_arr != []
-        for i = 1:length(ga.access_arr)
-            serialize(ga.access_iob, ga.access_arr[i])
-            seek(ga.access_iob, i * ga.elem_size)
-        end
-        ga.access_iob = IOBuffer(1)
-        ga.access_arr = []
-    end
-    ccall((:garray_flush, libgarbo), Void, (Ptr{Void},), ga.ahandle[1])
-end
-
 function get(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64})
     adjlo = lo - 1
     adjhi = hi - 1
@@ -82,6 +73,30 @@ function get(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64})
         seek(iob, i * ga.elem_size)
     end
     return buf
+end
+
+function getpersistent(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64})
+    adjlo = lo - 1
+    adjhi = hi - 1
+    dims = hi - lo + 1
+    cbufdims = dims * ga.elem_size
+    cbuf = Array(UInt8, cbufdims...)
+    r = ccall((:garray_get, libgarbo), Int64, (Ptr{Void}, Ptr{Int64}, Ptr{Int64},
+            Ptr{Void}), ga.ahandle[1], adjlo, adjhi, cbuf)
+    if r != 0
+        error("Garray get failed")
+    end
+    iob = IOBuffer(cbuf)
+    buf = Array(ga.atyp, dims...)
+    for i = 1:length(buf)
+        try
+            buf[i] = deserialize(iob)
+        catch e
+            break
+        end
+        seek(iob, i * ga.elem_size)
+    end
+    return buf, iob
 end
 
 function put!(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64}, buf::Array)
@@ -126,6 +141,9 @@ function access(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64})
     end
     dims = hi - lo + 1
     buf = Array(ga.atyp, dims...)
+    if length(buf) == 0
+        return buf
+    end
     cdims = dims * ga.elem_size
     iob = IOBuffer(unsafe_wrap(Array, convert(Ptr{UInt8}, p[1]), cdims...),
                    true, true)
@@ -141,5 +159,17 @@ function access(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64})
     ga.access_iob = iob
     ga.access_arr = buf
     return buf
+end
+
+function flush(ga::Garray)
+    if ga.access_arr != []
+        for i = 1:length(ga.access_arr)
+            serialize(ga.access_iob, ga.access_arr[i])
+            seek(ga.access_iob, i * ga.elem_size)
+        end
+        ga.access_iob = IOBuffer(1)
+        ga.access_arr = []
+    end
+    ccall((:garray_flush, libgarbo), Void, (Ptr{Void},), ga.ahandle[1])
 end
 
