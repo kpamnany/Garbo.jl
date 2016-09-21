@@ -6,7 +6,7 @@ leave_gc_safepoint(gs) = ccall(:jl_gc_safe_leave, Void, (Int8,), gs)
 
 import Base.ndims, Base.length, Base.size, Base.get, Base.put!, Base.flush
 export Garray, GarrayMemoryHandle, Dtree, nnodes, nodeid,
-       getpersistent, sync, distribution, access,
+       sync, distribution, access,
        initwork, getwork, runtree
 
 const libgarbo = joinpath(dirname(@__FILE__), "..", "deps", "Garbo",

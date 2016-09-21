@@ -52,7 +52,7 @@ sync()
 # get the whole array on node 1 and verify it
 even_dist_garray = true
 if nodeid == 1
-    fa = get(ga, [1], [nelems])
+    fa, fa_handle = get(ga, [1], [nelems])
     for i=1:nelems
         if fa[i].idx != i
             println(i, fa[i])
@@ -84,7 +84,7 @@ sync()
 # get the whole array on node 1 and verify it
 uneven_dist_garray = true
 if nodeid == 1
-    fa = get(ga, [1], [nelems])
+    fa, fa_handle = get(ga, [1], [nelems])
     for i=1:nelems
         if fa[i].idx != i
             uneven_dist_garray = false

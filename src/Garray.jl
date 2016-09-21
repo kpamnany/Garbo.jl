@@ -14,7 +14,7 @@ function Garray(T::DataType, elem_size::Int64, dims...)
         error("Garray must have at least one dimension")
     end
     adims = collect(dims)::Vector{Int64}
-    a = Garray([C_NULL], T, elem_size, IOBuffer(1), [])
+    a = Garray([C_NULL], T, elem_size, IOBuffer(), [])
     r = ccall((:garray_create, libgarbo), Int64, (Ptr{Void}, Int64, Ptr{Int64},
             Int64, Ptr{Int64}, Ptr{Void}), ghandle[1], nd, adims, a.elem_size,
             C_NULL, pointer(a.ahandle, 1))
@@ -52,30 +52,6 @@ function size(ga::Garray)
 end
 
 function get(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64})
-    adjlo = lo - 1
-    adjhi = hi - 1
-    dims = hi - lo + 1
-    cbufdims = dims * ga.elem_size
-    cbuf = Array(UInt8, cbufdims...)
-    r = ccall((:garray_get, libgarbo), Int64, (Ptr{Void}, Ptr{Int64}, Ptr{Int64},
-            Ptr{Void}), ga.ahandle[1], adjlo, adjhi, cbuf)
-    if r != 0
-        error("Garray get failed")
-    end
-    iob = IOBuffer(cbuf)
-    buf = Array(ga.atyp, dims...)
-    for i = 1:length(buf)
-        try
-            buf[i] = deserialize(iob)
-        catch e
-            break
-        end
-        seek(iob, i * ga.elem_size)
-    end
-    return buf
-end
-
-function getpersistent(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64})
     adjlo = lo - 1
     adjhi = hi - 1
     dims = hi - lo + 1
@@ -151,6 +127,7 @@ function access(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64})
         try
             buf[i] = deserialize(iob)
         catch e
+            # this is expected when the array is uninitialized
             break
         end
         seek(iob, i * ga.elem_size)
@@ -167,7 +144,6 @@ function flush(ga::Garray)
             serialize(ga.access_iob, ga.access_arr[i])
             seek(ga.access_iob, i * ga.elem_size)
         end
-        ga.access_iob = IOBuffer(1)
         ga.access_arr = []
     end
     ccall((:garray_flush, libgarbo), Void, (Ptr{Void},), ga.ahandle[1])
