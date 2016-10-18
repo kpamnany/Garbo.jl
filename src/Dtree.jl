@@ -30,6 +30,8 @@ Dtree(num_work_items::Int64, first::Float64) =
     Dtree(fan_out, num_work_items, true, 1.0, first, drain_rate, 1)
 Dtree(num_work_items::Int64, first::Float64, min_distrib::Int) =
     Dtree(fan_out, num_work_items, true, 1.0, first, drain_rate, min_distrib)
+Dtree(num_work_items::Int64, first::Float64, rest::Float64, min_distrib::Int) =
+    Dtree(fan_out, num_work_items, true, 1.0, first, rest, min_distrib)
 
 function initwork(dt::Dtree)
     w = [ 1, 1 ]::Array{Int64}
