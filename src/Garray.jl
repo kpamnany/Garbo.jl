@@ -123,12 +123,15 @@ function access(ga::Garray, lo::Vector{Int64}, hi::Vector{Int64})
     cdims = dims * ga.elem_size
     iob = IOBuffer(unsafe_wrap(Array, convert(Ptr{UInt8}, p[1]), cdims...),
                    true, true)
+
     for i = 1:length(buf)
         try
             buf[i] = deserialize(iob)
-        catch e
-            # this is expected when the array is uninitialized
-            break
+        catch exc
+            if !isa(exc, UndefRefError) && !isa(exc, BoundsError)
+                rethrow()
+            end
+            # this is expected when an array element is uninitialized
         end
         seek(iob, i * ga.elem_size)
     end
@@ -141,7 +144,12 @@ end
 function flush(ga::Garray)
     if ga.access_arr != []
         for i = 1:length(ga.access_arr)
-            serialize(ga.access_iob, ga.access_arr[i])
+            try serialize(ga.access_iob, ga.access_arr[i])
+            catch exc
+                if !isa(exc, UndefRefError)
+                    rethrow()
+                end
+            end
             seek(ga.access_iob, i * ga.elem_size)
         end
         ga.access_arr = []
