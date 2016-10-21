@@ -1,5 +1,5 @@
-const fan_out = 2048
-const drain_rate = 0.4
+const fan_out = 512
+const drain_rate = 0.5
 
 type Dtree
     handle::Array{Ptr{Void}}
